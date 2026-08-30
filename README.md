@@ -255,6 +255,7 @@ See [docs/development.md](docs/development.md) for architecture rules and
 ## Repository map
 
 ```text
+AGENTS.md          Canonical project instructions for coding agents
 src/calendar_sync/
   domain/          Provider-independent entities, value objects, policies, and decisions
   application/     Use cases and boundary protocols

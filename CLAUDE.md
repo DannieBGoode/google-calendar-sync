@@ -1,9 +1,6 @@
-# Agent guidance
+# Claude Code instructions
 
-Read `CONTEXT.md`, `docs/domain-model.md`, and the relevant architecture decision records before
-changing synchronization behavior. Preserve the inward dependency direction documented in
-`docs/architecture.md`, and never add real credentials or personal calendar data to the repository.
+Read and follow `AGENTS.md`; it is the canonical repository-wide instruction source. Keep this file
+as a compatibility pointer only so project guidance cannot drift between agents.
 
-Run the backend and frontend quality checks documented in `README.md` before proposing changes.
-Keep provider payloads at the infrastructure boundary and include domain tests when synchronization
-behavior changes.
+Do not add general-purpose Claude skills or personal agent configuration to this repository.
