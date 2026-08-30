@@ -1,0 +1,15 @@
+# Security Policy
+
+## Supported versions
+
+The project is currently pre-alpha and has no supported production release. Once stable releases begin, this section will list supported version lines.
+
+## Reporting a vulnerability
+
+Do not file a public GitHub issue when details could enable exploitation or expose calendar data. Use the repository's private security advisory feature. If that is unavailable, contact the maintainers through the private address published in the repository metadata.
+
+Include affected versions, impact, reproduction steps, and any suggested mitigation. Expect an acknowledgement within seven days. We will coordinate disclosure and credit unless you request anonymity.
+
+## Sensitive data
+
+Never attach OAuth credentials, refresh tokens, real event payloads, calendar IDs, account identifiers, database files, or application logs containing private data to a public report.

@@ -1,0 +1,213 @@
+# Calendar Synchronization
+
+This glossary defines the shared language for describing provider-independent calendar synchronization.
+
+## Authorization
+
+**Connected Account**:
+A Google identity authorized through one OAuth grant. A sync rule may use different connected accounts for its source and destination calendars.
+_Avoid_: Account, user, login
+
+## Synchronization
+
+**Directional Sync Rule**:
+A one-way, one-to-one relationship from exactly one source calendar to exactly one destination calendar. Two rules are required to express synchronization in both directions.
+_Avoid_: Calendar pair, sync pair, bidirectional rule
+
+**Source Calendar**:
+The single calendar whose events a directional sync rule observes.
+_Avoid_: Origin calendar, upstream calendar
+
+**Destination Calendar**:
+The single calendar where a directional sync rule manages event projections. It may belong to a different connected account than the source calendar.
+_Avoid_: Target calendar, downstream calendar
+
+**Event Projection**:
+The destination-facing representation derived from an authoritative source event by a transformation policy. Direct changes to a projection are overwritten during synchronization.
+_Avoid_: Event copy, cloned event
+
+**Drift**:
+A difference between the expected event projection and its actual destination state. Drift includes direct edits or deletion of a managed projection and is repaired from the source during synchronization.
+_Avoid_: Conflict, destination change
+
+**Event Mapping**:
+The durable identity link between one source event and the projection managed for it under one directional sync rule. A mapping is the proof of ownership required to update or delete a destination event.
+_Avoid_: Event match, duplicate record
+
+**Source Cancellation**:
+The source-side removal or cancellation of an event. It causes deletion of the mapped destination projection; restoring the source causes the projection to be created again.
+_Avoid_: Destination deletion, unlinking
+
+**Native Event**:
+An event authored outside this application on the calendar where a directional sync rule observes it. Only native events are eligible to become sources.
+_Avoid_: Original event, user event
+
+**Managed Projection**:
+An event projection owned by this application and marked with durable origin identity. Reverse rules ignore managed projections, preventing them from becoming sources and creating loops.
+_Avoid_: Synced event, copied event
+
+## Recurrence
+
+The domain retains recurrence identity so unsupported events can be recognized safely. The current
+pre-alpha synchronization policy excludes recurring series and occurrence exceptions rather than
+creating an incomplete projection. Full recurring-event support remains future work.
+
+**Event Series**:
+A recurring source event that defines a recurrence pattern shared by its occurrences. Its managed projection remains a recurring series rather than a collection of unrelated events.
+_Avoid_: Recurring master, parent event
+
+**Occurrence**:
+One scheduled instance of an event series, identified within that series. An occurrence may be modified or cancelled independently while retaining its series identity.
+_Avoid_: Child event, standalone event
+
+**Occurrence Exception**:
+A modification or cancellation that applies to one occurrence without changing the rest of its event series.
+_Avoid_: Recurrence override, detached event
+
+## Event Time
+
+**All-Day Event**:
+An event spanning calendar dates rather than times of day. It remains distinct from a timed event so timezone conversion cannot shift its dates.
+_Avoid_: Midnight event, untimed event
+
+**All-Day Sync Policy**:
+A directional sync rule setting that includes or excludes all-day source events from synchronization. New rules include all-day events unless the user opts out.
+_Avoid_: All-day filter, skip all-day flag
+
+## Transformation
+
+**Transformation Policy**:
+The rule-wide policy that determines the content of every event projection created by one directional sync rule. It is selected per rule, never per event.
+_Avoid_: Event privacy setting, copy mode
+
+**Busy-Only Projection**:
+An event projection containing timing and recurrence with the title “Busy,” while omitting source details. It is the default transformation policy for a new rule.
+_Avoid_: Private copy, redacted event
+
+**Details Projection**:
+An event projection containing source title, description, location, timing, and recurrence. It excludes attendees, organizer identity, conferencing links, and attachments, and never sends invitations.
+_Avoid_: Full clone, exact copy
+
+## Integrity
+
+**Conflict**:
+An ambiguous or corrupted identity relationship, such as two source events claiming the same managed projection. Content differences are drift, not conflicts; a conflict pauses automatic changes until repaired.
+_Avoid_: Destination edit, synchronization difference
+
+## Synchronization Progress
+
+**Initial Sync Window**:
+The source-event range inspected when a rule is first enabled: events ending within the previous 30 days or later, with no future cutoff.
+_Avoid_: History limit, retention period
+
+**Incremental Sync**:
+Synchronization of provider-reported changes after the initial sync window has completed successfully.
+_Avoid_: Delta import, partial sync
+
+**Scheduled Sync**:
+An incremental sync requested by the local scheduler every five minutes. It does not require a public webhook.
+_Avoid_: Real-time sync, push sync
+
+**Sync Now**:
+A user-requested synchronization that runs through the same behavior as a scheduled sync without waiting for the next interval.
+_Avoid_: Force sync, manual import
+
+## Health
+
+**Degraded Rule**:
+A rule whose synchronization is safely suspended because it currently requires recovery, such as reauthorizing a connected account. Its mappings and last successful incremental position remain intact, and no destination writes occur until recovery.
+_Avoid_: Failed rule, disabled rule
+
+**Reauthorization**:
+Renewal of a connected account's authorization after access is lost. Affected rules reconcile before returning to scheduled synchronization.
+_Avoid_: Reconnect, log in again
+
+**Incident**:
+A persistent operational condition requiring attention, such as expired authorization or identity corruption. Repeated sync attempts update one incident rather than creating duplicate alerts.
+_Avoid_: Error message, failure log
+
+**Incident Notification**:
+A deduplicated notice sent when an incident opens or resolves. The Web UI always retains the incident; an installation may additionally configure SMTP email or a generic JSON webhook.
+_Avoid_: Error alert, retry notification
+
+## Access
+
+**Installation Administrator**:
+The single local identity authorized to configure the installation, connected accounts, rules, and incident delivery. The initial release does not have additional users or roles.
+_Avoid_: User, owner, superuser
+
+**Public Health Status**:
+The minimal unauthenticated indication that the service is running. Calendar, account, rule, OAuth, audit, and incident details require an administrator session.
+_Avoid_: Public dashboard, anonymous status page
+
+**Installation Master Key**:
+A secret stored separately from the application database and used to protect persisted provider credentials. Losing it requires reauthorizing connected accounts.
+_Avoid_: OAuth secret, administrator password, database password
+
+## Rule Lifecycle
+
+**Rule Preview**:
+A side-effect-free evaluation showing eligible source events, excluded events, destination projections, and planned actions. A new or materially changed rule must pass preview before it can be enabled.
+_Avoid_: Test sync, simulation
+
+**Material Rule Change**:
+A change to a rule's calendars, transformation policy, or event eligibility that invalidates its previous preview and requires a new one.
+_Avoid_: Rule edit, configuration update
+
+**Rule Topology**:
+The set of directional relationships formed by enabled rules. One-to-many and many-to-one topologies are valid, but an exact source-calendar to destination-calendar relationship may exist only once.
+_Avoid_: Calendar graph, sync network
+
+**Paused Rule**:
+A reversible rule state that suspends synchronization while leaving its managed projections and mappings intact. Resuming begins with reconciliation.
+_Avoid_: Disabled rule, stopped rule
+
+**Rule Removal**:
+Permanent removal of a rule after the administrator explicitly chooses to delete its mapped projections or keep them as detached ordinary events. Mapped projection deletion is the recommended default.
+_Avoid_: Disable rule, pause rule
+
+**Detached Event**:
+A former managed projection retained during rule removal after application ownership and its mapping are removed. It is never updated by the removed rule.
+_Avoid_: Orphaned projection, preserved copy
+
+## Reconciliation
+
+**Touched Reconciliation**:
+Verification of mappings affected by one synchronization run. It occurs before that run is considered complete.
+_Avoid_: Sync verification, spot check
+
+**Full Reconciliation**:
+Daily or user-requested verification of every mapping under a rule. It repairs content drift and missing projections automatically but opens an incident for identity conflicts.
+_Avoid_: Full sync, rescan
+
+**Reconcile Now**:
+A user-requested full reconciliation that does not wait for the daily schedule.
+_Avoid_: Repair sync, force reconcile
+
+## Execution
+
+**Sync Run**:
+One attempt to synchronize a directional sync rule from a known incremental position. Its position advances only after all changes and touched reconciliation complete successfully.
+_Avoid_: Sync job, import run
+
+**Operation Key**:
+A stable identity assigned to an intended provider write so retrying a partial sync run cannot create a duplicate projection.
+_Avoid_: Request ID, idempotency token
+
+**Provider Incident**:
+An incident opened after three consecutive scheduled sync runs fail because of a temporary or rate-limited provider condition. It resolves automatically after a successful run.
+_Avoid_: Retry error, Google outage
+
+**Rule Isolation**:
+The guarantee that one rule's failed or degraded sync run does not block or roll back unrelated rules. Provider requests may still share connected-account rate limits.
+_Avoid_: Independent deployment, separate worker
+
+## Data Minimization
+
+**Projection Fingerprint**:
+A non-reversible digest of the normalized event projection used to compare expected and actual state without retaining source content.
+_Avoid_: Event snapshot, content hash
+
+**Operational Record**:
+Persisted synchronization evidence limited to identities, revisions, recurrence relationships, operation state, timestamps, and projection fingerprints. Event titles, descriptions, locations, attendee data, and conferencing data are not retained or included in audit entries or incident notifications.
+_Avoid_: Event history, cached event

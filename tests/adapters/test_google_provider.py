@@ -1,0 +1,175 @@
+from __future__ import annotations
+
+from datetime import UTC, datetime
+from types import SimpleNamespace
+from unittest.mock import MagicMock
+
+import pytest
+
+from calendar_sync.application.errors import ProviderFailure, ProviderFailureKind
+from calendar_sync.domain.model import EventProjection, SyncRuleId, TimedInterval
+from calendar_sync.infrastructure.google.provider import GoogleCalendarProvider
+from tests.helpers import endpoint, event
+
+
+class GoogleApiError(Exception):
+    def __init__(self, status: int, *, reason: str | None = None) -> None:
+        super().__init__(f"synthetic Google status {status}")
+        self.resp = SimpleNamespace(status=status)
+        self.content = (
+            b""
+            if reason is None
+            else ('{"error":{"errors":[{"reason":"' + reason + '"}]}}').encode()
+        )
+
+
+def request_returning(payload: dict[str, object]) -> MagicMock:
+    request = MagicMock()
+    request.execute.return_value = payload
+    return request
+
+
+def request_raising(status: int, *, reason: str | None = None) -> MagicMock:
+    request = MagicMock()
+    request.execute.side_effect = GoogleApiError(status, reason=reason)
+    return request
+
+
+def google_event_payload(event_id: str = "event-1") -> dict[str, object]:
+    return {
+        "id": event_id,
+        "etag": f"etag-{event_id}",
+        "summary": "Private appointment",
+        "start": {"dateTime": "2026-08-30T10:00:00+00:00"},
+        "end": {"dateTime": "2026-08-30T11:00:00+00:00"},
+    }
+
+
+def provider_with_events_api(events_api: MagicMock) -> GoogleCalendarProvider:
+    service = MagicMock()
+    service.events.return_value = events_api
+    return GoogleCalendarProvider(lambda _account_id: service)
+
+
+def test_changes_paginates_and_returns_the_final_sync_token() -> None:
+    events_api = MagicMock()
+    events_api.list.side_effect = [
+        request_returning({"items": [google_event_payload("one")], "nextPageToken": "page-2"}),
+        request_returning({"items": [google_event_payload("two")], "nextSyncToken": "cursor-2"}),
+    ]
+    provider = provider_with_events_api(events_api)
+
+    result = provider.changes(
+        endpoint("account", "calendar"),
+        None,
+        datetime(2026, 7, 31, tzinfo=UTC),
+    )
+
+    assert [item.reference.event_id.value for item in result.events] == ["one", "two"]
+    assert result.next_cursor == "cursor-2"
+    first_parameters = events_api.list.call_args_list[0].kwargs
+    second_parameters = events_api.list.call_args_list[1].kwargs
+    assert first_parameters["timeMin"] == "2026-07-31T00:00:00+00:00"
+    assert second_parameters["pageToken"] == "page-2"
+
+
+def test_expired_google_sync_token_recovers_with_a_full_window_request() -> None:
+    events_api = MagicMock()
+    events_api.list.side_effect = [
+        request_raising(410),
+        request_returning({"items": [], "nextSyncToken": "replacement-cursor"}),
+    ]
+    provider = provider_with_events_api(events_api)
+
+    result = provider.changes(
+        endpoint("account", "calendar"),
+        "expired-cursor",
+        datetime(2026, 7, 31, tzinfo=UTC),
+    )
+
+    assert result.next_cursor == "replacement-cursor"
+    assert events_api.list.call_args_list[0].kwargs["syncToken"] == "expired-cursor"
+    assert "syncToken" not in events_api.list.call_args_list[1].kwargs
+    assert "timeMin" in events_api.list.call_args_list[1].kwargs
+
+
+def test_create_projection_reuses_an_existing_operation() -> None:
+    events_api = MagicMock()
+    events_api.list.return_value = request_returning(
+        {"items": [google_event_payload("existing-projection")]}
+    )
+    provider = provider_with_events_api(events_api)
+    projection = EventProjection(
+        TimedInterval(
+            datetime(2026, 8, 30, 10, tzinfo=UTC),
+            datetime(2026, 8, 30, 11, tzinfo=UTC),
+        ),
+        "Busy",
+    )
+
+    created = provider.create_projection(
+        endpoint("work", "destination"),
+        event().reference,
+        SyncRuleId("rule-1"),
+        projection,
+        "stable-operation-key",
+    )
+
+    assert created.destination_event.reference.event_id.value == "existing-projection"
+    events_api.insert.assert_not_called()
+
+
+def test_get_event_returns_none_for_google_not_found() -> None:
+    events_api = MagicMock()
+    events_api.get.return_value = request_raising(404)
+    provider = provider_with_events_api(events_api)
+
+    assert provider.get_event(event().reference) is None
+
+
+def test_google_rate_limit_is_classified_as_retryable() -> None:
+    events_api = MagicMock()
+    events_api.get.return_value = request_raising(429)
+    provider = provider_with_events_api(events_api)
+
+    with pytest.raises(ProviderFailure) as raised:
+        provider.get_event(event().reference)
+
+    assert raised.value.kind is ProviderFailureKind.RATE_LIMIT
+    assert raised.value.retryable is True
+
+
+def test_google_403_quota_limit_is_retryable_but_permission_denial_is_not() -> None:
+    rate_limited_api = MagicMock()
+    rate_limited_api.get.return_value = request_raising(403, reason="userRateLimitExceeded")
+    denied_api = MagicMock()
+    denied_api.get.return_value = request_raising(403, reason="forbidden")
+
+    with pytest.raises(ProviderFailure) as rate_limited:
+        provider_with_events_api(rate_limited_api).get_event(event().reference)
+    with pytest.raises(ProviderFailure) as denied:
+        provider_with_events_api(denied_api).get_event(event().reference)
+
+    assert rate_limited.value.kind is ProviderFailureKind.RATE_LIMIT
+    assert rate_limited.value.retryable is True
+    assert denied.value.kind is ProviderFailureKind.AUTHORIZATION
+    assert denied.value.retryable is False
+
+
+def test_managed_event_listing_paginates() -> None:
+    events_api = MagicMock()
+    events_api.list.side_effect = [
+        request_returning(
+            {"items": [google_event_payload("managed-one")], "nextPageToken": "page-2"}
+        ),
+        request_returning({"items": [google_event_payload("managed-two")]}),
+    ]
+    provider = provider_with_events_api(events_api)
+
+    managed = provider.managed_events(endpoint("work", "destination"), SyncRuleId("rule-1"))
+
+    assert [item.reference.event_id.value for item in managed] == [
+        "managed-one",
+        "managed-two",
+    ]
+    assert events_api.list.call_args_list[1].kwargs["pageToken"] == "page-2"

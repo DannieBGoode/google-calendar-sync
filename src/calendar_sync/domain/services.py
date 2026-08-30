@@ -1,0 +1,250 @@
+from __future__ import annotations
+
+import hashlib
+import json
+from collections.abc import Iterable, Mapping
+from datetime import date, datetime
+
+from calendar_sync.domain.errors import DomainValidationError, OwnershipNotEstablished
+from calendar_sync.domain.model import (
+    AllDayRange,
+    AllDaySyncPolicy,
+    CalendarEvent,
+    DriftKind,
+    EventMapping,
+    EventProjection,
+    EventRef,
+    EventStatus,
+    PrivacyPolicy,
+    ProjectionFingerprint,
+    ReconciliationDrift,
+    ReconciliationReport,
+    SyncAction,
+    SyncDecision,
+    SyncRule,
+    TimedInterval,
+)
+
+
+class EventProjector:
+    """Produces a destination representation without provider-specific objects."""
+
+    def project(self, event: CalendarEvent, rule: SyncRule) -> EventProjection:
+        if event.time is None:
+            raise DomainValidationError("cancelled events cannot be projected")
+        policy = rule.transformation
+        if policy.privacy is PrivacyPolicy.BUSY_ONLY:
+            title = policy.busy_title
+            description = ""
+            location = ""
+        else:
+            title = event.title
+            description = event.description
+            location = event.location
+
+        return EventProjection(
+            time=event.time,
+            title=title,
+            description=description,
+            location=location,
+            recurrence=event.recurrence,
+        )
+
+
+class ProjectionFingerprinter:
+    """Creates a stable, non-reversible digest of normalized projection content."""
+
+    def fingerprint(self, projection: EventProjection) -> ProjectionFingerprint:
+        payload = {
+            "time": self._serialize_time(projection.time),
+            "title": projection.title,
+            "description": projection.description,
+            "location": projection.location,
+            "recurrence": projection.recurrence.lines if projection.recurrence else None,
+        }
+        encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        return ProjectionFingerprint(hashlib.sha256(encoded.encode()).hexdigest())
+
+    @staticmethod
+    def _serialize_time(value: TimedInterval | AllDayRange) -> dict[str, str]:
+        if isinstance(value, TimedInterval):
+            return {
+                "kind": "timed",
+                "starts_at": _serialize_temporal(value.starts_at),
+                "ends_at": _serialize_temporal(value.ends_at),
+            }
+        return {
+            "kind": "all_day",
+            "starts_on": _serialize_temporal(value.starts_on),
+            "ends_before": _serialize_temporal(value.ends_before),
+        }
+
+
+def _serialize_temporal(value: date | datetime) -> str:
+    return value.isoformat()
+
+
+class SyncDecisionService:
+    """Selects an idempotent synchronization action under source authority."""
+
+    def __init__(self, projector: EventProjector, fingerprinter: ProjectionFingerprinter) -> None:
+        self._projector = projector
+        self._fingerprinter = fingerprinter
+
+    def decide(
+        self,
+        rule: SyncRule,
+        source_event: CalendarEvent,
+        mapping: EventMapping | None,
+        actual_destination: CalendarEvent | None,
+    ) -> SyncDecision:
+        if source_event.reference.calendar != rule.source:
+            return SyncDecision(SyncAction.IGNORE, "event is outside the rule source calendar")
+        if source_event.managed_origin is not None:
+            return SyncDecision(SyncAction.IGNORE, "managed projections cannot become sources")
+        if source_event.recurrence is not None or source_event.occurrence is not None:
+            return SyncDecision(
+                SyncAction.CONFLICT,
+                "recurring series and occurrence exceptions are not supported yet",
+            )
+
+        if mapping is not None and (
+            mapping.rule_id != rule.id
+            or mapping.source != source_event.reference
+            or mapping.destination.calendar != rule.destination
+        ):
+            return SyncDecision(SyncAction.CONFLICT, "mapping identity is inconsistent")
+        if mapping is not None and actual_destination is not None:
+            if actual_destination.reference != mapping.destination:
+                return SyncDecision(SyncAction.CONFLICT, "destination identity is inconsistent")
+            origin = actual_destination.managed_origin
+            if (
+                origin is None
+                or origin.rule_id != rule.id
+                or origin.source != source_event.reference
+            ):
+                return SyncDecision(
+                    SyncAction.CONFLICT,
+                    "destination ownership metadata is inconsistent",
+                )
+
+        excluded_all_day = (
+            source_event.is_all_day and rule.transformation.all_day is AllDaySyncPolicy.EXCLUDE
+        )
+        if source_event.status is EventStatus.CANCELLED or excluded_all_day:
+            if mapping is None:
+                reason = "excluded event has no managed projection"
+                return SyncDecision(SyncAction.IGNORE, reason)
+            reason = (
+                "mapped source event was cancelled"
+                if source_event.status is EventStatus.CANCELLED
+                else "rule excludes mapped all-day event"
+            )
+            return SyncDecision(SyncAction.DELETE, reason)
+
+        projection = self._projector.project(source_event, rule)
+        if mapping is None:
+            return SyncDecision(SyncAction.CREATE, "source has no managed projection", projection)
+        if actual_destination is None:
+            return SyncDecision(SyncAction.CREATE, "managed projection is missing", projection)
+
+        expected = self._fingerprinter.fingerprint(projection)
+        actual = self._fingerprinter.fingerprint(self._as_projection(actual_destination))
+        if mapping.source_revision == source_event.revision and expected == actual:
+            return SyncDecision(SyncAction.IGNORE, "projection is current")
+        return SyncDecision(
+            SyncAction.UPDATE, "source authority repairs destination drift", projection
+        )
+
+    @staticmethod
+    def require_delete_ownership(mapping: EventMapping | None) -> EventMapping:
+        if mapping is None:
+            raise OwnershipNotEstablished("destination deletion requires an event mapping")
+        return mapping
+
+    @staticmethod
+    def _as_projection(event: CalendarEvent) -> EventProjection:
+        if event.time is None:
+            raise DomainValidationError("cancelled destination events cannot be projected")
+        return EventProjection(
+            time=event.time,
+            title=event.title,
+            description=event.description,
+            location=event.location,
+            recurrence=event.recurrence,
+        )
+
+
+class ReconciliationService:
+    """Proves mapped provider state against freshly derived expected projections."""
+
+    def __init__(self, fingerprinter: ProjectionFingerprinter) -> None:
+        self._fingerprinter = fingerprinter
+
+    def reconcile(
+        self,
+        rule: SyncRule,
+        mappings: Iterable[EventMapping],
+        expected_by_source: Mapping[EventRef, EventProjection],
+        actual_by_destination: Mapping[EventRef, CalendarEvent],
+    ) -> ReconciliationReport:
+        mapping_list = tuple(mappings)
+        drift: list[ReconciliationDrift] = []
+        managed_destinations: set[EventRef] = set()
+
+        for mapping in mapping_list:
+            if mapping.rule_id != rule.id or mapping.destination.calendar != rule.destination:
+                drift.append(
+                    ReconciliationDrift(
+                        DriftKind.MAPPING_INCONSISTENCY,
+                        mapping.source,
+                        mapping.destination,
+                        "mapping is outside this directional relationship",
+                    )
+                )
+                continue
+
+            managed_destinations.add(mapping.destination)
+            expected = expected_by_source.get(mapping.source)
+            actual = actual_by_destination.get(mapping.destination)
+            if expected is None:
+                drift.append(
+                    ReconciliationDrift(
+                        DriftKind.MAPPING_INCONSISTENCY,
+                        mapping.source,
+                        mapping.destination,
+                        "source event is unavailable for this mapping",
+                    )
+                )
+            elif actual is None:
+                drift.append(
+                    ReconciliationDrift(
+                        DriftKind.MISSING,
+                        mapping.source,
+                        mapping.destination,
+                        "managed projection is missing",
+                    )
+                )
+            elif self._fingerprinter.fingerprint(expected) != self._fingerprinter.fingerprint(
+                SyncDecisionService._as_projection(actual)
+            ):
+                drift.append(
+                    ReconciliationDrift(
+                        DriftKind.INCORRECT_PROJECTION,
+                        mapping.source,
+                        mapping.destination,
+                        "managed projection differs from source authority",
+                    )
+                )
+
+        for destination in actual_by_destination.keys() - managed_destinations:
+            drift.append(
+                ReconciliationDrift(
+                    DriftKind.UNEXPECTED,
+                    None,
+                    destination,
+                    "managed provider event has no mapping",
+                )
+            )
+
+        return ReconciliationReport(rule.id, len(mapping_list), tuple(drift))

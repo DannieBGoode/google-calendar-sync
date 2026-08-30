@@ -1,0 +1,60 @@
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
+
+[project]
+name = "google-calendar-sync"
+version = "0.1.0"
+description = "A self-hosted, domain-driven Google Calendar synchronization service"
+readme = "README.md"
+requires-python = ">=3.12"
+license = { file = "LICENSE" }
+authors = [{ name = "Google Calendar Sync contributors" }]
+classifiers = [
+  "Development Status :: 2 - Pre-Alpha",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3.12",
+  "Typing :: Typed",
+]
+dependencies = [
+  "cryptography>=44,<47",
+  "fastapi>=0.115,<1",
+  "google-api-python-client>=2.160,<3",
+  "google-auth-oauthlib>=1.2,<2",
+  "uvicorn[standard]>=0.34,<1",
+]
+
+[project.optional-dependencies]
+dev = [
+  "httpx>=0.28,<1",
+  "mypy>=1.15,<2",
+  "pytest>=8.3,<9",
+  "pytest-cov>=6,<8",
+  "ruff>=0.11,<1",
+]
+[project.scripts]
+calendar-sync = "calendar_sync.interfaces.api.app:run"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/calendar_sync"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+files = ["src", "tests"]
+
+[tool.pytest.ini_options]
+addopts = "--strict-markers --strict-config -q"
+testpaths = ["tests"]
+
+[tool.coverage.run]
+branch = true
+source = ["calendar_sync"]

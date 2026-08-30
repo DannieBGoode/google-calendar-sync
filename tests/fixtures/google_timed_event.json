@@ -1,0 +1,8 @@
+{
+  "id": "synthetic-event-001",
+  "etag": "synthetic-revision-001",
+  "status": "confirmed",
+  "summary": "Synthetic appointment",
+  "start": { "dateTime": "2026-08-30T10:00:00+00:00" },
+  "end": { "dateTime": "2026-08-30T11:00:00+00:00" }
+}
