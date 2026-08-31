@@ -222,7 +222,7 @@ class SyncRule:
         return replace(self, state=SyncRuleState.PAUSED)
 
     def degrade(self) -> Self:
-        if self.state is not SyncRuleState.ENABLED:
+        if self.state not in {SyncRuleState.DRY_RUN_VALIDATED, SyncRuleState.ENABLED}:
             raise InvalidStateTransition(f"cannot degrade a rule in state {self.state}")
         return replace(self, state=SyncRuleState.DEGRADED)
 

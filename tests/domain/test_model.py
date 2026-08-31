@@ -35,6 +35,15 @@ def test_rule_requires_preview_before_enablement() -> None:
     assert draft.mark_dry_run_validated().enable().state is SyncRuleState.ENABLED
 
 
+def test_validated_rule_can_be_degraded_before_enablement() -> None:
+    validated = rule(state=SyncRuleState.DRY_RUN_VALIDATED)
+
+    assert validated.degrade().state is SyncRuleState.DEGRADED
+
+    with pytest.raises(InvalidStateTransition):
+        rule(state=SyncRuleState.DRAFT).degrade()
+
+
 def test_all_day_range_uses_exclusive_end_date() -> None:
     value = AllDayRange(date(2026, 8, 30), date(2026, 8, 31))
 

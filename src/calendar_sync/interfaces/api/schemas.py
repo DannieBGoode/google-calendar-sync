@@ -52,6 +52,15 @@ class ConnectedAccountResponse(BaseModel):
     display_name: str
     email: str
     state: str
+    rule_count: int
+
+
+class GoogleAccountAccessResponse(BaseModel):
+    calendar_api: bool
+    calendar_list_access: bool
+    event_access: bool
+    calendars_visible: int
+    writable_calendars: int
 
 
 class DiscoveredCalendarResponse(BaseModel):
