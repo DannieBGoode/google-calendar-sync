@@ -41,6 +41,7 @@ machine and creates only the destination representation selected by each rule.
 | Reliability | Stable operation keys, cursor-last persistence, retry backoff, and isolated rule failures |
 | Incidents | Authenticated Activity view, deduplication, optional SMTP, and optional webhook delivery |
 | Access | One local administrator password and encrypted Google OAuth credentials |
+| Appearance | Device-aware light and dark themes with a browser-local override |
 | Deployment | One Docker image and Compose service for `linux/amd64` and `linux/arm64` |
 
 Google Calendar is the only provider in the initial release. Outlook and CalDAV are architectural
@@ -241,6 +242,7 @@ Vite proxies `/api` and `/health` to FastAPI. The OpenAPI interface is available
 .venv/bin/pytest --cov --cov-report=term-missing --cov-fail-under=80
 npm --prefix web run typecheck
 npm --prefix web run lint
+npm --prefix web run test
 npm --prefix web run build
 docker compose build
 ```

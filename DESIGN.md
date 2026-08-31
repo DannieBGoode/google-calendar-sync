@@ -14,6 +14,24 @@ colors:
   attention-soft: "oklch(0.94 0.055 80)"
   attention-ink: "oklch(0.34 0.08 70)"
   destructive: "oklch(0.50 0.18 25)"
+  night: "oklch(0.18 0.012 250)"
+  night-surface: "oklch(0.22 0.014 250)"
+  night-muted-surface: "oklch(0.27 0.018 250)"
+  night-calm-ink: "oklch(0.93 0.01 250)"
+  night-muted-ink: "oklch(0.73 0.02 250)"
+  night-status-cobalt: "oklch(0.68 0.15 250)"
+  night-status-soft: "oklch(0.27 0.055 250)"
+  night-quiet-border: "oklch(0.36 0.018 250)"
+  night-input-border: "oklch(0.52 0.02 250)"
+  night-healthy-soft: "oklch(0.27 0.045 155)"
+  night-healthy-ink: "oklch(0.79 0.11 155)"
+  night-healthy-surface: "oklch(0.22 0.025 155)"
+  night-healthy-border: "oklch(0.40 0.055 155)"
+  night-attention-soft: "oklch(0.29 0.05 80)"
+  night-attention-ink: "oklch(0.83 0.11 85)"
+  night-destructive: "oklch(0.68 0.16 25)"
+  night-destructive-soft: "oklch(0.28 0.06 25)"
+  night-destructive-ink: "oklch(0.80 0.11 25)"
 typography:
   headline:
     fontFamily: "Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif"
@@ -93,7 +111,13 @@ The layout uses a restrained top navigation and a readable central work area rat
 
 ## Colors
 
-Pure neutral daylight supports a cobalt indicator color, with distinct low-chroma semantic surfaces for health and attention.
+Pure neutral daylight supports a cobalt indicator color, with distinct low-chroma semantic surfaces for health and attention. Dark appearance keeps the same roles on a blue-tinted near-black canvas, increasing foreground and control contrast without turning the interface into an infrastructure console.
+
+### Appearance
+
+- **Device setting** is the default and follows the browser's current color-scheme preference, including changes made while the app is open.
+- **Light** and **Dark** are explicit browser-local choices. They apply before the interface paints and persist across visits without adding installation state to SQLite.
+- Semantic meaning does not change between appearances. Cobalt remains action and focus, moss remains healthy, ochre remains attention, and red remains destructive.
 
 ### Primary
 
@@ -152,7 +176,7 @@ The system is flat by default. Tonal layering, dividers, and spacing establish s
 ### Buttons
 
 - **Shape:** Gently curved and compact.
-- **Primary:** Status Cobalt with white text, reserved for the next meaningful action.
+- **Primary:** Status Cobalt with a contrast-checked foreground, reserved for the next meaningful action.
 - **Hover / Focus:** A small tonal change and a visible cobalt focus ring over 180 milliseconds.
 - **Secondary / Ghost:** Neutral structure for reversible and navigational actions.
 
@@ -164,15 +188,15 @@ The system is flat by default. Tonal layering, dividers, and spacing establish s
 ### Cards / Containers
 
 - **Corner Style:** Panels use the panel radius; list structure often uses dividers with no card at all.
-- **Background:** Daylight or Quiet Surface.
+- **Background:** The active canvas or Quiet Surface token.
 - **Shadow Strategy:** None at rest.
 - **Border:** One quiet full border only when grouping needs a boundary.
 - **Internal Padding:** 16 to 24 pixels depending on workflow density.
 
 ### Inputs / Fields
 
-- **Style:** Daylight fill, quiet border, compact curved edge.
-- **Focus:** Cobalt border and visible low-opacity ring.
+- **Style:** Canvas fill, quiet border, compact curved edge.
+- **Focus:** Cobalt border and a visible translucent ring with at least 3:1 contrast.
 - **Error / Disabled:** Error text accompanies destructive color; disabled controls remain readable and explain their prerequisite nearby.
 
 ### Navigation

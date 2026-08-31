@@ -4,6 +4,7 @@ import { useState } from "react"
 
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
+import { ThemeToggle } from "@/components/theme-toggle"
 import { AuthScreen } from "@/features/auth-screen"
 import { Dashboard, type AppView } from "@/features/dashboard"
 import { api } from "@/lib/api"
@@ -58,6 +59,7 @@ function AuthenticatedApp() {
           })}
         </nav>
         <div className="topbar-actions">
+          <ThemeToggle />
           <Button variant="ghost" size="sm" onClick={() => logout.mutate()} disabled={logout.isPending}><LogOut /> <span className="desktop-only">Sign out</span></Button>
           <Button className="menu-button" variant="ghost" size="icon" onClick={() => setMobileNav((open) => !open)} aria-expanded={mobileNav} aria-label={mobileNav ? "Close navigation" : "Open navigation"}>{mobileNav ? <X /> : <Menu />}</Button>
         </div>

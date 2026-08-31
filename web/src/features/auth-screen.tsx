@@ -5,6 +5,7 @@ import { useId, useState, type FormEvent } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { ThemeToggle } from "@/components/theme-toggle"
 import { api } from "@/lib/api"
 
 type AuthScreenProps = { mode: "setup" | "login" }
@@ -34,6 +35,9 @@ export function AuthScreen({ mode }: AuthScreenProps) {
 
   return (
     <main className="auth-shell">
+      <div className="auth-theme-control">
+        <ThemeToggle />
+      </div>
       <section className="auth-intro" aria-labelledby="auth-title">
         <div className="brand-mark" aria-hidden="true">
           <CalendarCheck2 />
