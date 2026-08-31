@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Annotated
 
 import uvicorn
-from fastapi import Cookie, Depends, FastAPI, HTTPException, Request, Response, status
+from fastapi import Cookie, Depends, FastAPI, HTTPException, Response, status
 from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -25,9 +25,17 @@ from calendar_sync.domain.model import (
     PrivacyPolicy,
     SyncRule,
     SyncRuleId,
+    SyncRuleState,
     TransformationPolicy,
 )
 from calendar_sync.infrastructure.google.oauth import (
+    ConnectedGoogleAccount,
+    ConnectedGoogleAccountDisconnected,
+    ConnectedGoogleAccountMustBeDisconnected,
+    ConnectedGoogleAccountNotFound,
+    GoogleAccountAccessCheckFailed,
+    GoogleCalendarPermissionRequired,
+    GoogleOAuthCompletionFailed,
     GoogleOAuthNotConfigured,
     InvalidOAuthState,
 )
@@ -42,6 +50,7 @@ from calendar_sync.interfaces.api.schemas import (
     CreateRuleRequest,
     DashboardResponse,
     DiscoveredCalendarResponse,
+    GoogleAccountAccessResponse,
     GoogleConfigurationResponse,
     IncidentResponse,
     PasswordRequest,
@@ -131,7 +140,9 @@ def create_app(container: Container | None = None) -> FastAPI:
     def dashboard() -> DashboardResponse:
         with sqlite3.connect(resolved.settings.database_path) as connection:
             accounts = int(
-                connection.execute("SELECT COUNT(*) FROM connected_accounts").fetchone()[0]
+                connection.execute(
+                    "SELECT COUNT(*) FROM connected_accounts WHERE state = 'connected'"
+                ).fetchone()[0]
             )
             incidents = int(
                 connection.execute(
@@ -176,16 +187,42 @@ def create_app(container: Container | None = None) -> FastAPI:
             raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(error)) from error
 
     @app.get("/api/v1/oauth/google/callback", include_in_schema=False)
-    def complete_google_oauth(request: Request, state: str) -> RedirectResponse:
+    def complete_google_oauth(
+        state: str,
+        code: str | None = None,
+        error: str | None = None,
+    ) -> RedirectResponse:
         if resolved.google_oauth is None:
             raise HTTPException(
                 status.HTTP_503_SERVICE_UNAVAILABLE, "Google OAuth is not configured"
             )
+        if error is not None:
+            try:
+                resolved.google_oauth.cancel(state)
+            except InvalidOAuthState as state_error:
+                raise HTTPException(status.HTTP_400_BAD_REQUEST, str(state_error)) from state_error
+            outcome = (
+                "calendar_permission_required"
+                if error == "access_denied"
+                else "authorization_failed"
+            )
+            return RedirectResponse(f"/settings?google={outcome}", status_code=303)
+        if code is None:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                "Google OAuth callback did not include an authorization result",
+            )
         try:
-            resolved.google_oauth.complete(state, str(request.url))
-        except InvalidOAuthState as error:
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, str(error)) from error
-        return RedirectResponse("/?google=connected", status_code=303)
+            resolved.google_oauth.complete(state, code)
+        except InvalidOAuthState as state_error:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, str(state_error)) from state_error
+        except GoogleCalendarPermissionRequired:
+            return RedirectResponse(
+                "/settings?google=calendar_permission_required", status_code=303
+            )
+        except GoogleOAuthCompletionFailed:
+            return RedirectResponse("/settings?google=authorization_failed", status_code=303)
+        return RedirectResponse("/settings?google=connected", status_code=303)
 
     @app.get(
         "/api/v1/accounts",
@@ -195,15 +232,65 @@ def create_app(container: Container | None = None) -> FastAPI:
     def list_accounts() -> list[ConnectedAccountResponse]:
         if resolved.connected_accounts is None:
             return []
-        return [
-            ConnectedAccountResponse(
-                id=account.id.value,
-                display_name=account.display_name,
-                email=account.email,
-                state=account.state,
+        with resolved.unit_of_work() as uow:
+            rules = tuple(uow.rules.list())
+        return [_account_response(account, rules) for account in resolved.connected_accounts.list()]
+
+    @app.post(
+        "/api/v1/accounts/{account_id}/disconnect",
+        response_model=ConnectedAccountResponse,
+        dependencies=[Depends(require_admin)],
+    )
+    def disconnect_account(account_id: str) -> ConnectedAccountResponse:
+        if resolved.connected_accounts is None:
+            raise HTTPException(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                "configure the installation master key before managing Google accounts",
             )
-            for account in resolved.connected_accounts.list()
-        ]
+        try:
+            existing = next(
+                account
+                for account in resolved.connected_accounts.list()
+                if account.id == ConnectedAccountId(account_id)
+            )
+        except StopIteration as error:
+            raise HTTPException(
+                status.HTTP_404_NOT_FOUND,
+                f"connected account {account_id} does not exist",
+            ) from error
+        with resolved.unit_of_work() as uow:
+            for rule in uow.rules.list():
+                if _rule_uses_account(rule, existing.id) and rule.state in {
+                    SyncRuleState.DRY_RUN_VALIDATED,
+                    SyncRuleState.ENABLED,
+                }:
+                    uow.rules.save(rule.degrade())
+            uow.commit()
+        try:
+            account = resolved.connected_accounts.disconnect(ConnectedAccountId(account_id))
+        except ConnectedGoogleAccountNotFound as error:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, str(error)) from error
+        with resolved.unit_of_work() as uow:
+            rules = tuple(uow.rules.list())
+        return _account_response(account, rules)
+
+    @app.delete(
+        "/api/v1/accounts/{account_id}",
+        status_code=status.HTTP_204_NO_CONTENT,
+        dependencies=[Depends(require_admin)],
+    )
+    def delete_account(account_id: str) -> None:
+        if resolved.connected_accounts is None:
+            raise HTTPException(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                "configure the installation master key before managing Google accounts",
+            )
+        try:
+            resolved.connected_accounts.delete(ConnectedAccountId(account_id))
+        except ConnectedGoogleAccountNotFound as error:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, str(error)) from error
+        except ConnectedGoogleAccountMustBeDisconnected as error:
+            raise HTTPException(status.HTTP_409_CONFLICT, str(error)) from error
 
     @app.get(
         "/api/v1/accounts/{account_id}/calendars",
@@ -215,7 +302,12 @@ def create_app(container: Container | None = None) -> FastAPI:
             raise HTTPException(
                 status.HTTP_503_SERVICE_UNAVAILABLE, "Google OAuth is not configured"
             )
-        calendars = resolved.google_oauth.calendars(ConnectedAccountId(account_id))
+        try:
+            calendars = resolved.google_oauth.calendars(ConnectedAccountId(account_id))
+        except ConnectedGoogleAccountNotFound as error:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, str(error)) from error
+        except ConnectedGoogleAccountDisconnected as error:
+            raise HTTPException(status.HTTP_409_CONFLICT, str(error)) from error
         return [
             DiscoveredCalendarResponse(
                 id=calendar.id,
@@ -225,6 +317,32 @@ def create_app(container: Container | None = None) -> FastAPI:
             )
             for calendar in calendars
         ]
+
+    @app.post(
+        "/api/v1/accounts/{account_id}/verify",
+        response_model=GoogleAccountAccessResponse,
+        dependencies=[Depends(require_admin)],
+    )
+    def verify_account_access(account_id: str) -> GoogleAccountAccessResponse:
+        if resolved.google_oauth is None:
+            raise HTTPException(
+                status.HTTP_503_SERVICE_UNAVAILABLE, "Google OAuth is not configured"
+            )
+        try:
+            access = resolved.google_oauth.verify_access(ConnectedAccountId(account_id))
+        except ConnectedGoogleAccountNotFound as error:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, str(error)) from error
+        except ConnectedGoogleAccountDisconnected as error:
+            raise HTTPException(status.HTTP_409_CONFLICT, str(error)) from error
+        except GoogleAccountAccessCheckFailed as error:
+            raise HTTPException(status.HTTP_424_FAILED_DEPENDENCY, str(error)) from error
+        return GoogleAccountAccessResponse(
+            calendar_api=True,
+            calendar_list_access=True,
+            event_access=True,
+            calendars_visible=access.calendars_visible,
+            writable_calendars=access.writable_calendars,
+        )
 
     @app.get(
         "/api/v1/rules",
@@ -464,6 +582,26 @@ def _rule_response(rule: SyncRule) -> RuleResponse:
         sync_all_day_events=rule.transformation.all_day is AllDaySyncPolicy.INCLUDE,
         state=rule.state.value,
     )
+
+
+def _account_response(
+    account: ConnectedGoogleAccount, rules: tuple[SyncRule, ...]
+) -> ConnectedAccountResponse:
+    rule_count = sum(1 for rule in rules if _rule_uses_account(rule, account.id))
+    return ConnectedAccountResponse(
+        id=account.id.value,
+        display_name=account.display_name,
+        email=account.email,
+        state=account.state,
+        rule_count=rule_count,
+    )
+
+
+def _rule_uses_account(rule: SyncRule, account_id: ConnectedAccountId) -> bool:
+    return account_id in {
+        rule.source.connected_account_id,
+        rule.destination.connected_account_id,
+    }
 
 
 def run() -> None:

@@ -43,6 +43,14 @@ export type ConnectedAccount = {
   display_name: string
   email: string
   state: string
+  rule_count: number
+}
+export type GoogleAccountAccess = {
+  calendar_api: boolean
+  calendar_list_access: boolean
+  event_access: boolean
+  calendars_visible: number
+  writable_calendars: number
 }
 export type DiscoveredCalendar = {
   id: string
@@ -103,6 +111,16 @@ export const api = {
   googleConfiguration: () =>
     request<GoogleConfiguration>("/api/v1/google/configuration"),
   accounts: () => request<ConnectedAccount[]>("/api/v1/accounts"),
+  disconnectAccount: (accountId: string) =>
+    request<ConnectedAccount>(`/api/v1/accounts/${encodeURIComponent(accountId)}/disconnect`, {
+      method: "POST",
+    }),
+  deleteAccount: (accountId: string) =>
+    request<void>(`/api/v1/accounts/${encodeURIComponent(accountId)}`, { method: "DELETE" }),
+  verifyAccountAccess: (accountId: string) =>
+    request<GoogleAccountAccess>(`/api/v1/accounts/${encodeURIComponent(accountId)}/verify`, {
+      method: "POST",
+    }),
   calendars: (accountId: string) =>
     request<DiscoveredCalendar[]>(`/api/v1/accounts/${encodeURIComponent(accountId)}/calendars`),
   createRule: (payload: {

@@ -1,13 +1,19 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Activity, CalendarCheck2, LogOut, Menu, Settings2, Waypoints, X } from "lucide-react"
-import { useState } from "react"
+import { useEffect, useState, type MouseEvent } from "react"
 
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { ThemeToggle } from "@/components/theme-toggle"
 import { AuthScreen } from "@/features/auth-screen"
-import { Dashboard, type AppView } from "@/features/dashboard"
+import { Dashboard } from "@/features/dashboard"
 import { api } from "@/lib/api"
+import {
+  appPathForView,
+  appViewFromPathname,
+  isKnownAppPath,
+  type AppView,
+} from "@/lib/navigation"
 import { cn } from "@/lib/utils"
 
 const navItems: { id: AppView; label: string; icon: typeof Waypoints }[] = [
@@ -36,26 +42,53 @@ export default function App() {
   return <AuthenticatedApp />
 }
 function AuthenticatedApp() {
-  const [view, setView] = useState<AppView>("overview")
+  const [view, setView] = useState<AppView>(() => appViewFromPathname(window.location.pathname))
   const [mobileNav, setMobileNav] = useState(false)
   const queryClient = useQueryClient()
   const logout = useMutation({ mutationFn: api.logOut, onSuccess: () => queryClient.clear() })
 
+  useEffect(() => {
+    if (!isKnownAppPath(window.location.pathname)) {
+      const currentView = appViewFromPathname(window.location.pathname)
+      window.history.replaceState(
+        null,
+        "",
+        `${appPathForView(currentView)}${window.location.search}`,
+      )
+    }
+    const handlePopState = () => {
+      setView(appViewFromPathname(window.location.pathname))
+      setMobileNav(false)
+    }
+    window.addEventListener("popstate", handlePopState)
+    return () => window.removeEventListener("popstate", handlePopState)
+  }, [])
+
   function changeView(next: AppView) {
+    const nextPath = appPathForView(next)
+    if (window.location.pathname !== nextPath || window.location.search || window.location.hash) {
+      window.history.pushState(null, "", nextPath)
+    }
     setView(next)
     setMobileNav(false)
+  }
+
+  function followSectionLink(event: MouseEvent<HTMLAnchorElement>, next: AppView) {
+    if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
+    event.preventDefault()
+    changeView(next)
   }
 
   return (
     <div className="app-shell">
       <header className="topbar">
-        <button className="wordmark" onClick={() => changeView("overview")} aria-label="Calendar Sync overview">
+        <a className="wordmark" href={appPathForView("overview")} onClick={(event) => followSectionLink(event, "overview")} aria-label="Calendar Sync overview">
           <span className="wordmark-icon"><CalendarCheck2 /></span><span>Calendar Sync</span>
-        </button>
+        </a>
         <nav className={cn("primary-nav", mobileNav && "open")} aria-label="Primary navigation">
           {navItems.map((item) => {
             const Icon = item.icon
-            return <button key={item.id} className={cn("nav-item", view === item.id && "active")} onClick={() => changeView(item.id)} aria-current={view === item.id ? "page" : undefined}><Icon /><span>{item.label}</span></button>
+            return <a key={item.id} href={appPathForView(item.id)} className={cn("nav-item", view === item.id && "active")} onClick={(event) => followSectionLink(event, item.id)} aria-current={view === item.id ? "page" : undefined}><Icon /><span>{item.label}</span></a>
           })}
         </nav>
         <div className="topbar-actions">

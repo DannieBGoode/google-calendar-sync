@@ -4,6 +4,21 @@ All notable changes follow [Keep a Changelog](https://keepachangelog.com/en/1.1.
 
 ## [Unreleased]
 
+### Added
+
+- Connected Account management with permission checks, safe disconnection, reauthorization, and permanent local deletion.
+- Stable URLs for Overview, Rules, Activity, and Settings, with account identity markers throughout rule management.
+
+### Changed
+
+- Disconnected-account rules now stop clearly and preserve recovery data until reauthorization or permanent deletion.
+- Appearance and color-theme preferences now share one Settings control.
+
+### Fixed
+
+- Google OAuth callbacks now support local HTTP development, preserve PKCE verification across redirects, and recover cleanly when Calendar permissions are declined.
+- Activity request failures, empty activity, and low-contrast actions now have distinct, accessible interface states.
+
 ## [0.1.0] - 2026-08-30
 
 ### Added

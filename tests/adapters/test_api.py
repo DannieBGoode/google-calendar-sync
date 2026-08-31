@@ -1,15 +1,26 @@
 import sqlite3
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
+from unittest.mock import Mock
 
+import pytest
 from fastapi.testclient import TestClient
 
 from calendar_sync.application.ports import AuditEntry
 from calendar_sync.bootstrap.config import Settings
 from calendar_sync.bootstrap.container import build_container
-from calendar_sync.domain.model import SyncRuleId
+from calendar_sync.domain.model import ConnectedAccountId, SyncRule, SyncRuleId, SyncRuleState
+from calendar_sync.infrastructure.google.oauth import (
+    ConnectedGoogleAccountNotFound,
+    CredentialCipher,
+    GoogleAccountAccess,
+    GoogleAccountAccessCheckFailed,
+    GoogleCalendarPermissionRequired,
+    GoogleOAuthCompletionFailed,
+)
 from calendar_sync.interfaces.api.app import create_app
-from tests.helpers import rule
+from tests.helpers import endpoint, rule
 
 
 def test_first_run_admin_and_protected_dashboard(tmp_path: Path) -> None:
@@ -193,6 +204,476 @@ def test_google_routes_report_unconfigured_installation(tmp_path: Path) -> None:
         assert client.post("/api/v1/rules/missing/preview").status_code == 503
 
 
+def test_connected_accounts_can_be_listed_and_disconnected(tmp_path: Path) -> None:
+    database = tmp_path / "test.db"
+    container = replace(
+        build_container(Settings(database, master_key=CredentialCipher.generate_key())),
+        scheduler=None,
+    )
+    assert container.connected_accounts is not None
+    account = container.connected_accounts.save(
+        "Personal", "person@example.test", '{"refresh_token":"synthetic-secret"}'
+    )
+    with container.unit_of_work() as uow:
+        uow.rules.add(rule())
+        uow.rules.add(
+            SyncRule(
+                id=SyncRuleId("paused-rule"),
+                source=endpoint(account.id.value, "paused-calendar"),
+                destination=endpoint("work-account", "paused-destination"),
+                state=SyncRuleState.PAUSED,
+            )
+        )
+        uow.rules.add(
+            SyncRule(
+                id=SyncRuleId("validated-rule"),
+                source=endpoint(account.id.value, "validated-calendar"),
+                destination=endpoint("work-account", "validated-destination"),
+                state=SyncRuleState.DRY_RUN_VALIDATED,
+            )
+        )
+        uow.rules.add(
+            SyncRule(
+                id=SyncRuleId("unrelated-rule"),
+                source=endpoint("other-account", "other-calendar"),
+                destination=endpoint("work-account", "other-destination"),
+                state=SyncRuleState.ENABLED,
+            )
+        )
+        uow.rules.add(
+            SyncRule(
+                id=SyncRuleId("destination-rule"),
+                source=endpoint("other-account", "destination-source"),
+                destination=endpoint(account.id.value, "destination-calendar"),
+                state=SyncRuleState.ENABLED,
+            )
+        )
+        uow.cursors.save(SyncRuleId("rule-1"), "preserved-cursor")
+        uow.commit()
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "UPDATE sync_rules SET source_account_id = ? WHERE id = 'rule-1'",
+            (account.id.value,),
+        )
+    app = create_app(container)
+
+    with TestClient(app) as client:
+        assert client.post(f"/api/v1/accounts/{account.id.value}/disconnect").status_code == 401
+        assert client.delete(f"/api/v1/accounts/{account.id.value}").status_code == 401
+        client.post("/api/v1/setup/admin", json={"password": "correct horse battery staple"})
+
+        listed = client.get("/api/v1/accounts")
+        disconnected = client.post(f"/api/v1/accounts/{account.id.value}/disconnect")
+        disconnected_calendars = client.get(f"/api/v1/accounts/{account.id.value}/calendars")
+        disconnected_verification = client.post(f"/api/v1/accounts/{account.id.value}/verify")
+        repeated = client.post(f"/api/v1/accounts/{account.id.value}/disconnect")
+        missing = client.post("/api/v1/accounts/missing/disconnect")
+        dashboard = client.get("/api/v1/dashboard")
+
+    assert listed.status_code == 200
+    assert listed.json() == [
+        {
+            "id": account.id.value,
+            "display_name": "Personal",
+            "email": "person@example.test",
+            "state": "connected",
+            "rule_count": 4,
+        }
+    ]
+    assert disconnected.status_code == 200
+    assert disconnected.json()["state"] == "disconnected"
+    assert disconnected.json()["rule_count"] == 4
+    assert disconnected_calendars.status_code == 409
+    assert "reauthorize" in disconnected_calendars.json()["detail"]
+    assert disconnected_verification.status_code == 409
+    assert repeated.status_code == 200
+    assert missing.status_code == 404
+    assert dashboard.json()["connected_accounts"] == 0
+    with container.unit_of_work() as uow:
+        disconnected_rule = uow.rules.get(SyncRuleId("rule-1"))
+    assert disconnected_rule is not None
+    assert disconnected_rule.state is SyncRuleState.DEGRADED
+    with container.unit_of_work() as uow:
+        paused_rule = uow.rules.get(SyncRuleId("paused-rule"))
+        validated_rule = uow.rules.get(SyncRuleId("validated-rule"))
+        unrelated_rule = uow.rules.get(SyncRuleId("unrelated-rule"))
+        destination_rule = uow.rules.get(SyncRuleId("destination-rule"))
+        cursor = uow.cursors.get(SyncRuleId("rule-1"))
+    assert paused_rule is not None
+    assert paused_rule.state is SyncRuleState.PAUSED
+    assert validated_rule is not None
+    assert validated_rule.state is SyncRuleState.DEGRADED
+    assert unrelated_rule is not None
+    assert unrelated_rule.state is SyncRuleState.ENABLED
+    assert destination_rule is not None
+    assert destination_rule.state is SyncRuleState.DEGRADED
+    assert cursor == "preserved-cursor"
+
+
+def test_disconnected_account_can_be_permanently_deleted_with_affected_rules(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "test.db"
+    container = replace(
+        build_container(Settings(database, master_key=CredentialCipher.generate_key())),
+        scheduler=None,
+    )
+    assert container.connected_accounts is not None
+    account = container.connected_accounts.save(
+        "Personal", "person@example.test", '{"refresh_token":"synthetic-secret"}'
+    )
+    unrelated_account = container.connected_accounts.save(
+        "Work", "work@example.test", '{"refresh_token":"synthetic-secret"}'
+    )
+    affected_rule = SyncRule(
+        id=SyncRuleId("delete-rule"),
+        source=endpoint(account.id.value, "personal-calendar"),
+        destination=endpoint(unrelated_account.id.value, "work-calendar"),
+        state=SyncRuleState.ENABLED,
+    )
+    destination_affected_rule = SyncRule(
+        id=SyncRuleId("delete-destination-rule"),
+        source=endpoint("third-account", "third-calendar"),
+        destination=endpoint(account.id.value, "personal-destination"),
+        state=SyncRuleState.PAUSED,
+    )
+    unrelated_rule = SyncRule(
+        id=SyncRuleId("keep-rule"),
+        source=endpoint(unrelated_account.id.value, "work-calendar"),
+        destination=endpoint("third-account", "third-calendar"),
+        state=SyncRuleState.PAUSED,
+    )
+    with container.unit_of_work() as uow:
+        uow.rules.add(affected_rule)
+        uow.rules.add(destination_affected_rule)
+        uow.rules.add(unrelated_rule)
+        uow.cursors.save(affected_rule.id, "source-cursor")
+        uow.destination_cursors.save(affected_rule.id, "destination-cursor")
+        uow.commit()
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            """
+            INSERT INTO event_mappings (
+                id, rule_id, source_account_id, source_calendar_id, source_event_id,
+                destination_account_id, destination_calendar_id, destination_event_id,
+                source_revision, projection_fingerprint
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "mapping-1",
+                affected_rule.id.value,
+                account.id.value,
+                "personal-calendar",
+                "source-event",
+                unrelated_account.id.value,
+                "work-calendar",
+                "destination-event",
+                "revision-1",
+                "fingerprint-1",
+            ),
+        )
+        connection.execute(
+            """
+            INSERT INTO audit_entries (occurred_at, rule_id, action, outcome, detail)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (
+                "2026-08-31T12:00:00+00:00",
+                affected_rule.id.value,
+                "create",
+                "completed",
+                "synthetic operational detail",
+            ),
+        )
+        connection.execute(
+            """
+            INSERT INTO incidents (
+                id, deduplication_key, rule_id, category, state,
+                summary, opened_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "incident-1",
+                "authentication:delete-rule",
+                affected_rule.id.value,
+                "authentication",
+                "open",
+                "Synthetic authorization incident",
+                "2026-08-31T12:00:00+00:00",
+                "2026-08-31T12:00:00+00:00",
+            ),
+        )
+        connection.execute(
+            """
+            INSERT INTO rule_failures (rule_id, consecutive_failures, last_category, updated_at)
+            VALUES (?, ?, ?, ?)
+            """,
+            (affected_rule.id.value, 2, "authentication", "2026-08-31T12:00:00+00:00"),
+        )
+    app = create_app(container)
+
+    with TestClient(app) as client:
+        client.post("/api/v1/setup/admin", json={"password": "correct horse battery staple"})
+        connected_delete = client.delete(f"/api/v1/accounts/{account.id.value}")
+        disconnected = client.post(f"/api/v1/accounts/{account.id.value}/disconnect")
+        deleted = client.delete(f"/api/v1/accounts/{account.id.value}")
+        repeated = client.delete(f"/api/v1/accounts/{account.id.value}")
+
+    assert connected_delete.status_code == 409
+    assert "disconnect" in connected_delete.json()["detail"]
+    assert disconnected.status_code == 200
+    assert deleted.status_code == 204
+    assert repeated.status_code == 404
+    with sqlite3.connect(database) as connection:
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM connected_accounts WHERE id = ?", (account.id.value,)
+            ).fetchone()[0]
+            == 0
+        )
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM connected_accounts WHERE id = ?",
+                (unrelated_account.id.value,),
+            ).fetchone()[0]
+            == 1
+        )
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM sync_rules WHERE id = ?", (affected_rule.id.value,)
+            ).fetchone()[0]
+            == 0
+        )
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM sync_rules WHERE id = ?",
+                (destination_affected_rule.id.value,),
+            ).fetchone()[0]
+            == 0
+        )
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM sync_rules WHERE id = ?", (unrelated_rule.id.value,)
+            ).fetchone()[0]
+            == 1
+        )
+        for table in (
+            "event_mappings",
+            "sync_cursors",
+            "destination_sync_cursors",
+            "audit_entries",
+            "incidents",
+            "rule_failures",
+        ):
+            assert (
+                connection.execute(
+                    f"SELECT COUNT(*) FROM {table} WHERE rule_id = ?", (affected_rule.id.value,)
+                ).fetchone()[0]
+                == 0
+            )
+
+
+def test_disconnected_account_without_rules_can_be_permanently_deleted(tmp_path: Path) -> None:
+    database = tmp_path / "test.db"
+    container = replace(
+        build_container(Settings(database, master_key=CredentialCipher.generate_key())),
+        scheduler=None,
+    )
+    assert container.connected_accounts is not None
+    account = container.connected_accounts.save(
+        "Unused", "unused@example.test", '{"refresh_token":"synthetic-secret"}'
+    )
+    container.connected_accounts.disconnect(account.id)
+    app = create_app(container)
+
+    with TestClient(app) as client:
+        client.post("/api/v1/setup/admin", json={"password": "correct horse battery staple"})
+        deleted = client.delete(f"/api/v1/accounts/{account.id.value}")
+
+    assert deleted.status_code == 204
+    assert container.connected_accounts.list() == ()
+
+
+def test_connected_account_access_can_be_verified(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    container = replace(
+        build_container(Settings(tmp_path / "test.db", master_key=CredentialCipher.generate_key())),
+        scheduler=None,
+    )
+    assert container.google_oauth is not None
+    verify_access = Mock(return_value=GoogleAccountAccess(3, 2))
+    monkeypatch.setattr(container.google_oauth, "verify_access", verify_access)
+    app = create_app(container)
+
+    with TestClient(app) as client:
+        assert client.post("/api/v1/accounts/account-1/verify").status_code == 401
+        client.post("/api/v1/setup/admin", json={"password": "correct horse battery staple"})
+        response = client.post("/api/v1/accounts/account-1/verify")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "calendar_api": True,
+        "calendar_list_access": True,
+        "event_access": True,
+        "calendars_visible": 3,
+        "writable_calendars": 2,
+    }
+    verify_access.assert_called_once_with(ConnectedAccountId("account-1"))
+
+
+@pytest.mark.parametrize(
+    ("failure", "expected_status"),
+    [
+        (ConnectedGoogleAccountNotFound("missing account"), 404),
+        (GoogleAccountAccessCheckFailed("provider unavailable"), 424),
+    ],
+)
+def test_connected_account_access_failures_are_mapped_to_recovery_statuses(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure: Exception,
+    expected_status: int,
+) -> None:
+    container = replace(
+        build_container(Settings(tmp_path / "test.db", master_key=CredentialCipher.generate_key())),
+        scheduler=None,
+    )
+    assert container.google_oauth is not None
+    monkeypatch.setattr(container.google_oauth, "verify_access", Mock(side_effect=failure))
+    app = create_app(container)
+
+    with TestClient(app) as client:
+        client.post("/api/v1/setup/admin", json={"password": "correct horse battery staple"})
+        response = client.post("/api/v1/accounts/account-1/verify")
+
+    assert response.status_code == expected_status
+    assert response.json()["detail"] == str(failure)
+
+
+def test_google_oauth_callback_exchanges_code_without_forwarding_http_url(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    container = build_container(
+        Settings(tmp_path / "test.db", master_key=CredentialCipher.generate_key())
+    )
+    assert container.google_oauth is not None
+    complete = Mock()
+    monkeypatch.setattr(container.google_oauth, "complete", complete)
+    app = create_app(container)
+
+    with TestClient(app) as client:
+        response = client.get(
+            "/api/v1/oauth/google/callback?state=synthetic-state&code=synthetic-code",
+            follow_redirects=False,
+        )
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/settings?google=connected"
+    complete.assert_called_once_with("synthetic-state", "synthetic-code")
+
+
+def test_google_oauth_denial_returns_to_settings_and_consumes_state(tmp_path: Path) -> None:
+    container = build_container(
+        Settings(tmp_path / "test.db", master_key=CredentialCipher.generate_key())
+    )
+    assert container.google_oauth is not None
+    container.google_oauth._store_state("synthetic-state")
+    app = create_app(container)
+
+    with TestClient(app) as client:
+        response = client.get(
+            "/api/v1/oauth/google/callback?state=synthetic-state&error=access_denied",
+            follow_redirects=False,
+        )
+        repeated = client.get(
+            "/api/v1/oauth/google/callback?state=synthetic-state&error=access_denied",
+            follow_redirects=False,
+        )
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/settings?google=calendar_permission_required"
+    assert repeated.status_code == 400
+
+
+def test_google_oauth_non_permission_error_returns_to_settings(tmp_path: Path) -> None:
+    container = build_container(
+        Settings(tmp_path / "test.db", master_key=CredentialCipher.generate_key())
+    )
+    assert container.google_oauth is not None
+    container.google_oauth._store_state("synthetic-state")
+    app = create_app(container)
+
+    with TestClient(app) as client:
+        response = client.get(
+            "/api/v1/oauth/google/callback?state=synthetic-state&error=temporarily_unavailable",
+            follow_redirects=False,
+        )
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/settings?google=authorization_failed"
+
+
+def test_google_oauth_callback_requires_an_authorization_result(tmp_path: Path) -> None:
+    container = build_container(
+        Settings(tmp_path / "test.db", master_key=CredentialCipher.generate_key())
+    )
+    app = create_app(container)
+
+    with TestClient(app) as client:
+        response = client.get(
+            "/api/v1/oauth/google/callback?state=synthetic-state",
+            follow_redirects=False,
+        )
+
+    assert response.status_code == 400
+    assert "authorization result" in response.json()["detail"]
+
+
+def test_google_oauth_missing_calendar_permission_returns_to_settings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    container = build_container(
+        Settings(tmp_path / "test.db", master_key=CredentialCipher.generate_key())
+    )
+    assert container.google_oauth is not None
+    complete = Mock(side_effect=GoogleCalendarPermissionRequired("permission required"))
+    monkeypatch.setattr(container.google_oauth, "complete", complete)
+    app = create_app(container)
+
+    with TestClient(app) as client:
+        response = client.get(
+            "/api/v1/oauth/google/callback?state=synthetic-state&code=synthetic-code",
+            follow_redirects=False,
+        )
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/settings?google=calendar_permission_required"
+    complete.assert_called_once_with("synthetic-state", "synthetic-code")
+
+
+def test_google_oauth_completion_failure_returns_to_settings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    container = build_container(
+        Settings(tmp_path / "test.db", master_key=CredentialCipher.generate_key())
+    )
+    assert container.google_oauth is not None
+    complete = Mock(side_effect=GoogleOAuthCompletionFailed("token exchange failed"))
+    monkeypatch.setattr(container.google_oauth, "complete", complete)
+    app = create_app(container)
+
+    with TestClient(app) as client:
+        response = client.get(
+            "/api/v1/oauth/google/callback?state=synthetic-state&code=synthetic-code",
+            follow_redirects=False,
+        )
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/settings?google=authorization_failed"
+    complete.assert_called_once_with("synthetic-state", "synthetic-code")
+
+
 def test_frontend_fallback_cannot_serve_files_outside_static_root(tmp_path: Path) -> None:
     app = create_app(build_container(Settings(tmp_path / "test.db")))
 
@@ -203,6 +684,18 @@ def test_frontend_fallback_cannot_serve_files_outside_static_root(tmp_path: Path
     assert response.headers["content-type"].startswith("text/html")
     assert "Calendar Sync" in response.text
     assert "from __future__ import annotations" not in response.text
+
+
+@pytest.mark.parametrize("path", ["/overview", "/rules", "/activity", "/settings"])
+def test_frontend_fallback_serves_each_application_section(tmp_path: Path, path: str) -> None:
+    app = create_app(build_container(Settings(tmp_path / "test.db")))
+
+    with TestClient(app) as client:
+        response = client.get(path)
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/html")
+    assert "Calendar Sync" in response.text
 
 
 def test_enabled_rule_can_be_paused_through_api(tmp_path: Path) -> None:

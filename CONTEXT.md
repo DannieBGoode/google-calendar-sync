@@ -8,6 +8,15 @@ This glossary defines the shared language for describing provider-independent ca
 A Google identity authorized through one OAuth grant. A sync rule may use different connected accounts for its source and destination calendars.
 _Avoid_: Account, user, login
 
+**Disconnected Account**:
+A previously connected Google identity whose stored credentials have been removed from the installation. It remains listed so the same identity can be reauthorized without losing rule mappings or incremental positions. Enabled rules that use it become degraded immediately.
+_Avoid_: Deleted account, removed user
+
+A Disconnected Account may instead be permanently deleted by the Installation Administrator. This
+removes every affected Directional Sync Rule and its mappings, cursors, incidents, and audit
+activity. Existing Managed Projections remain in Google Calendar and are no longer managed because
+the installation no longer has the authorization or ownership records required to change them.
+
 ## Synchronization
 
 **Directional Sync Rule**:
@@ -119,7 +128,7 @@ A rule whose synchronization is safely suspended because it currently requires r
 _Avoid_: Failed rule, disabled rule
 
 **Reauthorization**:
-Renewal of a connected account's authorization after access is lost. Affected rules reconcile before returning to scheduled synchronization.
+Renewal of a connected or disconnected account's authorization after access is lost or removed. Affected rules reconcile before returning to scheduled synchronization.
 _Avoid_: Reconnect, log in again
 
 **Incident**:
