@@ -38,11 +38,19 @@ Attendees, organizer identity, conferencing links, and attachments do not enter 
 
 ```text
 Draft -> DryRunValidated -> Enabled -> Paused
-                          |     |
-                          |     -> Degraded
-                          -> Disabled
+                |              |
+                -> Degraded <--|
+                |
+                -> Disabled
 ```
 
 Only a successfully previewed configuration can become Enabled. An Enabled Rule can be Paused from
-the Web UI. A Degraded Rule performs no writes until the account is reauthorized and the rule passes
-a new recovery preview; re-enabling starts with both preserved incremental positions.
+the Web UI. Disconnecting an account moves affected Enabled and DryRunValidated rules to Degraded,
+preventing a previously validated rule from being enabled without authorization. A Degraded Rule
+performs no writes until the account is reauthorized and the rule passes a new recovery preview;
+re-enabling starts with both preserved incremental positions.
+
+Permanent deletion is available only after a Connected Account is disconnected. Deletion removes
+the account and every Directional Sync Rule that references it, including those rules' Event
+Mappings, cursors, incidents, and audit activity. It does not issue provider writes: existing
+Managed Projections remain in Google Calendar but are no longer managed.

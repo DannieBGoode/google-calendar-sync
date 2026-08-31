@@ -24,6 +24,10 @@ The image targets `linux/arm64` as well as `linux/amd64`. Use a 64-bit Raspberry
 
 Keep Google client credentials and the installation master key outside the database and repository. Use Docker secrets or a root-readable environment file. Database backups cannot restore connected accounts without the separately backed-up master key.
 
+Disconnecting a Google identity from Settings replaces its encrypted credential payload with an
+empty encrypted value. Directional Sync Rules and their mappings remain in SQLite so the same
+identity can be reauthorized and reconciled later.
+
 ## Incident notifications
 
 Incidents always appear in the authenticated Activity screen. Optionally set

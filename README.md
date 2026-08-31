@@ -113,6 +113,16 @@ Open <http://localhost:8000>, create the local administrator, and follow the thr
 2. Create a directional rule and choose its privacy and all-day policies.
 3. Preview the rule, inspect the result, and enable it.
 
+The main sections have stable URLs at `/overview`, `/rules`, `/activity`, and `/settings`, so they
+can be bookmarked and browser back/forward navigation works as expected.
+
+Use **Settings → Connected accounts** to review every authorized identity, connect another Google
+account, check its Calendar API access, or disconnect it. **Check access** verifies calendar-list
+and event permissions with read-only requests and reports how many visible calendars can be used as
+destinations. Disconnecting removes stored Google credentials and degrades any enabled rule that
+uses the identity; mappings, Managed Projections, and incremental positions are preserved for safe
+reauthorization.
+
 Check service health with:
 
 ```sh
@@ -151,8 +161,12 @@ creating a duplicate. See [the synchronization model](docs/sync-model.md) for th
 - Mappings retain provider IDs, revisions, and a non-reversible projection fingerprint.
 - Google access and refresh credentials are encrypted at rest with AES-256-GCM using the separate
   installation master key.
+- Disconnecting an account discards its stored Google credentials without deleting rules,
+  mappings, or Managed Projections.
 - The OAuth flow requests event access and read-only calendar-list discovery; it does not request
   general Google account access.
+- The account access check requests calendar metadata and, from one calendar, event IDs only. It
+  does not retain event data or make provider writes.
 - Google writes use `sendUpdates=none`, and projections contain no attendees or invitation data.
 - The Web UI and operational API require the local administrator session. `/health` remains public
   and intentionally minimal.
