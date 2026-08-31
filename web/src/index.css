@@ -120,10 +120,6 @@ button:disabled {
   cursor: not-allowed;
 }
 
-a {
-  color: inherit;
-}
-
 h1,
 h2,
 h3,
@@ -667,6 +663,11 @@ p {
   height: 1.35rem;
 }
 
+.empty-icon-error {
+  background: var(--destructive-soft);
+  color: var(--destructive-soft-foreground);
+}
+
 .empty-panel p {
   max-width: 34rem;
   margin-top: 0.5rem;
@@ -677,6 +678,261 @@ p {
 .rule-list {
   border-top: 1px solid var(--border);
   border-bottom: 1px solid var(--border);
+}
+
+.settings-section {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.oauth-feedback {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.875rem;
+  padding: 1rem;
+  border: 1px solid var(--border);
+  border-radius: 0.75rem;
+}
+
+.oauth-feedback > svg {
+  width: 1.25rem;
+  height: 1.25rem;
+}
+
+.oauth-feedback h2 {
+  font-size: 0.95rem;
+  line-height: 1.35;
+}
+
+.oauth-feedback p {
+  margin-top: 0.25rem;
+  color: var(--muted-foreground);
+  font-size: 0.85rem;
+  line-height: 1.5;
+}
+
+.oauth-feedback-success {
+  border-color: var(--success-border);
+  background: var(--success-surface);
+}
+
+.oauth-feedback-success > svg,
+.oauth-feedback-success h2 {
+  color: var(--success-foreground);
+}
+
+.oauth-feedback-warning {
+  background: var(--warning-soft);
+}
+
+.oauth-feedback-warning > svg,
+.oauth-feedback-warning h2 {
+  color: var(--warning-foreground);
+}
+
+.account-list-loading {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.account-empty {
+  display: flex;
+  min-height: 7rem;
+  align-items: center;
+  gap: 1rem;
+  padding: 1.25rem;
+  border: 1px solid var(--border);
+  border-radius: 0.75rem;
+  background: var(--surface);
+}
+
+.account-empty > svg {
+  width: 1.5rem;
+  height: 1.5rem;
+  flex: none;
+  color: var(--primary);
+}
+
+.account-empty h3,
+.account-copy h3,
+.setting-row h3,
+.disconnect-confirmation h4 {
+  font-size: 0.95rem;
+  line-height: 1.35;
+}
+
+.account-empty p,
+.account-copy p,
+.setting-row p,
+.disconnect-confirmation p {
+  margin-top: 0.25rem;
+  color: var(--muted-foreground);
+  font-size: 0.875rem;
+  line-height: 1.5;
+}
+
+.account-list {
+  margin: 0;
+  padding: 0;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  list-style: none;
+}
+
+.account-item {
+  padding: 1rem 0;
+}
+
+.account-item + .account-item,
+.setting-row + .setting-row {
+  border-top: 1px solid var(--border);
+}
+
+.account-main,
+.account-identity,
+.account-actions,
+.disconnect-confirmation,
+.confirmation-actions {
+  display: flex;
+  align-items: center;
+}
+
+.account-main,
+.disconnect-confirmation {
+  justify-content: space-between;
+  gap: 1.5rem;
+}
+
+.account-identity {
+  min-width: 0;
+  gap: 0.875rem;
+}
+
+.account-mark {
+  display: flex;
+  width: 2.5rem;
+  height: 2.5rem;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--muted);
+  color: var(--primary);
+  font-size: 0.78rem;
+  font-weight: 750;
+  letter-spacing: 0.025em;
+}
+
+.account-mark svg {
+  width: 1.25rem;
+  height: 1.25rem;
+}
+
+.account-copy {
+  min-width: 0;
+}
+
+.account-copy h3,
+.account-copy p {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account-copy span {
+  display: block;
+  margin-top: 0.25rem;
+  color: var(--muted-foreground);
+  font-size: 0.75rem;
+  line-height: 1.4;
+}
+
+.account-actions,
+.confirmation-actions {
+  flex: none;
+  gap: 0.75rem;
+}
+
+.account-actions {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.account-action {
+  min-height: 2.75rem;
+}
+
+.account-delete-action {
+  color: var(--destructive);
+}
+
+.account-delete-action:hover {
+  color: var(--destructive);
+}
+
+.disconnect-confirmation {
+  margin-top: 1rem;
+  padding: 1rem;
+  border-radius: 0.625rem;
+  background: var(--surface);
+}
+
+.delete-confirmation {
+  border: 1px solid var(--destructive);
+  background: var(--destructive-soft);
+}
+
+.delete-confirmation h4 {
+  color: var(--destructive-soft-foreground);
+}
+
+.disconnect-confirmation > div:first-child {
+  max-width: 64ch;
+}
+
+.account-status-message {
+  color: var(--success-foreground);
+  font-size: 0.875rem;
+  line-height: 1.5;
+}
+
+.account-access-result {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  margin-top: 1rem;
+  padding: 0.875rem 1rem;
+  border: 1px solid var(--success-border);
+  border-radius: 0.625rem;
+  background: var(--success-surface);
+}
+
+.account-access-result > svg {
+  width: 1.125rem;
+  height: 1.125rem;
+  margin-top: 0.1rem;
+  flex: none;
+  color: var(--success-foreground);
+}
+
+.account-access-result h4 {
+  color: var(--success-foreground);
+  font-size: 0.875rem;
+  line-height: 1.4;
+}
+
+.account-access-result p {
+  margin-top: 0.2rem;
+  color: var(--muted-foreground);
+  font-size: 0.8rem;
+  line-height: 1.5;
+}
+
+.account-access-error {
+  margin-top: 1rem;
 }
 
 .setting-row,
@@ -698,7 +954,18 @@ p {
   font-weight: 600;
 }
 
-.rule-direction span {
+.rule-details {
+  min-width: 0;
+}
+
+.rule-endpoint {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0.625rem;
+}
+
+.rule-endpoint > span:last-child {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -708,6 +975,33 @@ p {
   width: 1rem;
   flex: none;
   color: var(--muted-foreground);
+}
+
+.account-mark-compact {
+  width: 2rem;
+  height: 2rem;
+  font-size: 0.68rem;
+}
+
+.rule-recovery-note {
+  display: flex;
+  max-width: 48rem;
+  align-items: flex-start;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+  padding: 0.625rem 0.75rem;
+  border-radius: 0.5rem;
+  background: var(--warning-soft);
+  color: var(--warning-foreground);
+  font-size: 0.8rem;
+  line-height: 1.5;
+}
+
+.rule-recovery-note > svg {
+  width: 1rem;
+  height: 1rem;
+  margin-top: 0.1rem;
+  flex: none;
 }
 
 .rule-policy,
@@ -930,13 +1224,38 @@ p {
   .page-heading-row,
   .section-heading,
   .step-content,
-  .setting-row {
+  .setting-row,
+  .account-main,
+  .disconnect-confirmation,
+  .oauth-feedback {
     align-items: flex-start;
     flex-direction: column;
   }
 
   .appearance-control {
     width: min(100%, 18rem);
+  }
+
+  .account-actions,
+  .confirmation-actions {
+    width: 100%;
+    flex-direction: column;
+  }
+
+  .account-actions {
+    align-items: flex-start;
+    justify-content: flex-start;
+  }
+
+  .confirmation-actions {
+    align-items: stretch;
+  }
+
+  .account-actions > button,
+  .account-actions > a,
+  .confirmation-actions > button,
+  .confirmation-actions > a {
+    width: 100%;
   }
 
   .step-action {
