@@ -23,7 +23,7 @@ Run FastAPI on port 8000 and Vite on port 5173. Vite proxies `/api` and `/health
 .venv/bin/ruff check .
 .venv/bin/mypy
 .venv/bin/pytest --cov
-cd web && npm run typecheck && npm run lint && npm run build
+cd web && npm run typecheck && npm run lint && npm run test && npm run build
 ```
 
 Fixtures in `tests/fixtures` are synthetic. Never copy provider responses from a personal account into the repository.

@@ -19,7 +19,9 @@ import { Label } from "@/components/ui/label"
 import { NativeSelect } from "@/components/ui/native-select"
 import { Separator } from "@/components/ui/separator"
 import { Skeleton } from "@/components/ui/skeleton"
+import { useTheme } from "@/components/theme-provider"
 import { api } from "@/lib/api"
+import type { ThemePreference } from "@/lib/theme"
 
 export type AppView = "overview" | "rules" | "activity" | "settings"
 
@@ -430,7 +432,63 @@ function ActivityView() {
 }
 
 function SettingsView({ googleConfigured }: { googleConfigured: boolean }) {
-  return <div className="page-section"><div><p className="page-context">Settings</p><h1>Installation settings</h1><p className="page-intro">Operational defaults apply to this self-hosted installation.</p></div><div className="settings-list"><div className="setting-row"><div><h2>Scheduled sync</h2><p>Check enabled rules for changes every five minutes.</p></div><Badge variant="healthy"><CheckCircle2 /> Active</Badge></div><Separator /><div className="setting-row"><div><h2>Google authorization</h2><p>Reconnect an identity after an authorization incident, then validate recovery from Rules.</p></div>{googleConfigured ? <a className="button-link" href="/api/v1/oauth/google/start">Reconnect account</a> : <Badge variant="attention">Not configured</Badge>}</div><Separator /><div className="setting-row"><div><h2>Incident notifications</h2><p>Incidents always appear in Activity. Optional SMTP and webhook delivery are configured through the self-hosted environment.</p></div><a className="button-link" href="/api/docs" target="_blank" rel="noreferrer">API docs</a></div></div></div>
+  const { preference, setPreference } = useTheme()
+
+  return (
+    <div className="page-section">
+      <div>
+        <p className="page-context">Settings</p>
+        <h1>Installation settings</h1>
+        <p className="page-intro">Operational defaults apply to this self-hosted installation.</p>
+      </div>
+      <div className="settings-list">
+        <div className="setting-row">
+          <div>
+            <h2>Appearance</h2>
+            <p>Follow this device, or keep the interface light or dark in this browser.</p>
+          </div>
+          <div className="appearance-control">
+            <NativeSelect
+              id="theme-preference"
+              aria-label="Color theme"
+              value={preference}
+              onChange={(event) => setPreference(event.target.value as ThemePreference)}
+            >
+              <option value="system">Device setting</option>
+              <option value="light">Light</option>
+              <option value="dark">Dark</option>
+            </NativeSelect>
+          </div>
+        </div>
+        <Separator />
+        <div className="setting-row">
+          <div>
+            <h2>Scheduled sync</h2>
+            <p>Check enabled rules for changes every five minutes.</p>
+          </div>
+          <Badge variant="healthy"><CheckCircle2 /> Active</Badge>
+        </div>
+        <Separator />
+        <div className="setting-row">
+          <div>
+            <h2>Google authorization</h2>
+            <p>Reconnect an identity after an authorization incident, then validate recovery from Rules.</p>
+          </div>
+          {googleConfigured
+            ? <a className="button-link" href="/api/v1/oauth/google/start">Reconnect account</a>
+            : <Badge variant="attention">Not configured</Badge>}
+        </div>
+        <Separator />
+        <div className="setting-row">
+          <div>
+            <h2>Incident notifications</h2>
+            <p>Incidents always appear in Activity. Optional SMTP and webhook delivery are configured through the self-hosted environment.</p>
+          </div>
+          <a className="button-link" href="/api/docs" target="_blank" rel="noreferrer">API docs</a>
+        </div>
+      </div>
+    </div>
+  )
 }
 
 function DashboardSkeleton() {
